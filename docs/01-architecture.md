@@ -4,12 +4,11 @@
 
 This is a proof-of-concept for real-time multi-client synchronization using Electric SQL. The app is a collaborative todo list where changes made in one browser tab appear instantly in all other connected tabs.
 
-The three client-side libraries each own a distinct concern:
+The two client-side libraries each own a distinct concern:
 
 | Library | Concern | Scope |
 |---|---|---|
-| **Electric SQL** | Read path | Streams Postgres rows to the browser in real time |
-| **TanStack Query** | Write path | Sends mutations to the API, tracks optimistic state |
+| **TanStack DB + Electric SQL** | Read + write path | Syncs Postgres rows to a reactive client-side collection; handles optimistic mutations |
 | **Zustand** | Client-local UI state | Per-tab identity, filter selection |
 
 ## Data Flow
@@ -20,17 +19,17 @@ The three client-side libraries each own a distinct concern:
   │  Zustand             │                    │  Zustand             │
   │  (filter, identity)  │                    │  (filter, identity)  │
   │         │            │                    │         │            │
-  │  TanStack Query      │                    │  TanStack Query      │
-  │  (mutations)  ──────────── POST /api ──────────►              │
-  │         │            │                    │                      │
-  │  Electric SQL        │                    │  Electric SQL        │
-  │  (useShape) ◄───── shape stream ─────────── (useShape)        │
+  │  TanStack DB         │                    │  TanStack DB         │
+  │  (Electric collection)│                    │  (Electric collection)│
+  │  insert/update/delete ──── POST /todos ────────►              │
+  │  useLiveQuery ◄───── shape stream ─────────── useLiveQuery    │
   └─────────────────────┘                    └─────────────────────┘
               │                                         ▲
               ▼                                         │
   ┌──────────────────────────────────────────────────────┐
-  │  Express API (port 4001)                             │
-  │  POST/PATCH/DELETE /api/todos  ──►  Postgres INSERT  │
+  │  PostgREST (port 4001)                               │
+  │  Auto-generated REST API from Postgres schema        │
+  │  POST/PATCH/DELETE /todos  ──►  Postgres DML         │
   └──────────────────────────────────────────────────────┘
               │                                         ▲
               ▼                                         │
@@ -46,73 +45,82 @@ The three client-side libraries each own a distinct concern:
 
 ### Write path (client -> Postgres)
 
-1. User action triggers a TanStack Query `useMutation` call.
-2. `onMutate` returns an optimistic `Todo` object, stored as mutation context.
-3. The mutation function sends a `fetch` request to the Express API on port 4001.
-4. The API writes directly to Postgres using the `pg` connection pool.
-5. The mutation settles (success or error).
+1. Component calls `todosCollection.insert()`, `.update()`, or `.delete()`.
+2. TanStack DB applies the change **optimistically** — the UI updates immediately.
+3. The collection's persistence handler (`onInsert`, `onUpdate`, `onDelete`) fires asynchronously, sending a `fetch` request to PostgREST on port 4001.
+4. PostgREST translates the HTTP request into a Postgres DML statement and executes it.
+5. If the handler throws, TanStack DB **rolls back** the optimistic change automatically.
 
 ### Read path (Postgres -> all clients)
 
 1. Postgres commits the row change.
 2. Electric's sync service reads the change from the WAL (logical replication).
 3. Electric pushes the change over HTTP to all clients subscribed to the `todos` shape.
-4. `useShape<Todo>` updates its `data` array, triggering a React re-render.
+4. The Electric collection in TanStack DB absorbs the update, reconciling it with any pending optimistic state.
+5. All `useLiveQuery` hooks that reference the collection re-render with the new data.
 
-### Optimistic merge
+### Optimistic state
 
-Between steps 3 and 5 above there is a brief window where the write has been sent but Electric hasn't confirmed it yet. During this window:
+TanStack DB handles optimistic state internally. When a mutation is made:
 
-- `useMutationState` surfaces all pending `createTodo` mutations.
-- `useTodos` merges pending optimistic todos into the server data using a `Map<id, Todo>`.
-- Server data always wins (if a todo already exists in the Electric data, the optimistic entry is discarded).
+- The change appears in the collection immediately (before the API call completes).
+- `useLiveQuery` results reflect the optimistic state.
+- If the persistence handler succeeds, the optimistic state is eventually replaced by the confirmed server data arriving via the Electric shape stream.
+- If the handler fails, the optimistic state is rolled back automatically.
 
-This merge happens in `src/hooks/useTodos.ts`:
-
-```ts
-const map = new Map<string, Todo>();
-for (const todo of serverTodos) {
-  map.set(todo.id, todo);
-}
-for (const todo of pendingCreates) {
-  if (!map.has(todo.id)) {
-    map.set(todo.id, todo);
-  }
-}
-```
+No manual merge logic is needed — this is handled by TanStack DB's collection internals.
 
 ## Library Responsibilities
 
-### Electric SQL (`@electric-sql/react`)
+### TanStack DB + Electric SQL (`@tanstack/react-db` + `@tanstack/electric-db-collection`)
 
-- Owns the **read path** exclusively.
-- `useShape<Todo>(todosShapeOptions)` subscribes to the `todos` table.
-- The shape stream is an HTTP connection to Electric's `/v1/shape` endpoint.
-- Electric does **not** handle writes. It is a read-only sync layer.
+- Owns **both the read and write paths** through a single collection.
+- `electricCollectionOptions` connects a TanStack DB collection to an Electric shape stream, syncing the `todos` table in real time.
+- `useLiveQuery` provides reactive, SQL-like queries with filtering and sorting — results update automatically when the underlying collection changes.
+- Collection mutation methods (`.insert()`, `.update()`, `.delete()`) are optimistic by default with auto-rollback.
+- Persistence handlers (`onInsert`, `onUpdate`, `onDelete`) define how mutations are sent to PostgREST.
 
-Configuration is in `src/electric.ts`:
+The collection is defined in `src/collection.ts`:
 
 ```ts
-export const todosShapeOptions = {
-  url: `${ELECTRIC_URL}/v1/shape`,
-  params: { table: "todos" },
-};
+export const todosCollection = createCollection(
+  electricCollectionOptions<Todo>({
+    id: "todos",
+    shapeOptions: {
+      url: `${ELECTRIC_URL}/v1/shape`,
+      params: { table: "todos" },
+    },
+    getKey: (todo) => todo.id,
+    onInsert: async ({ transaction }) => {
+      const todo = transaction.mutations[0].modified;
+      await createTodo(todo.id, todo.title, todo.created_by);
+    },
+    // ...
+  })
+);
 ```
 
-### TanStack Query (`@tanstack/react-query`)
+Reactive queries are used in `src/hooks/useTodos.ts`:
 
-- Owns the **write path** and **optimistic state tracking**.
-- `useMutation` sends writes to the Express API.
-- `useMutationState` provides a list of in-flight mutations so the UI can display optimistic entries before Electric confirms them.
-- `QueryClientProvider` wraps the app in `src/main.tsx`.
-
-This project does **not** use `useQuery` from TanStack Query -- reads are handled entirely by Electric's `useShape`. TanStack Query is here only for its mutation and optimistic state primitives.
+```ts
+const { data: filteredTodos } = useLiveQuery(
+  (q) => {
+    const base = q.from({ todo: todosCollection });
+    if (filter === "active")
+      return base.where(({ todo }) => eq(todo.completed, false));
+    if (filter === "completed")
+      return base.where(({ todo }) => eq(todo.completed, true));
+    return base;
+  },
+  [filter]
+);
+```
 
 ### Zustand
 
 - Owns **client-local state** that does not belong in Postgres.
 - `clientId`, `clientName`, `clientColor`: randomly generated per tab on load. Used to tag which client created a todo.
-- `filter`: the current todo filter (all / active / completed). Pure UI state, not synced.
+- `filter`: the current todo filter (all / active / completed). Pure UI state that parameterizes the `useLiveQuery` call.
 
 Store is defined in `src/store.ts`:
 
@@ -130,30 +138,36 @@ export const useAppStore = create<AppState>((set) => ({
 
 ### Docker Compose
 
-Two services, defined in `docker-compose.yml`:
+Three services, defined in `docker-compose.yml`:
 
-- **postgres** (`postgres:18-alpine`): The source of truth. Runs with `wal_level=logical` to enable Electric's logical replication. The `db/init.sql` script creates the `todos` table and sets `REPLICA IDENTITY FULL` on startup.
+- **postgres** (`postgres:18-alpine`): The source of truth. Runs with `wal_level=logical` to enable Electric's logical replication. The `db/init.sql` script creates the `todos` table, sets `REPLICA IDENTITY FULL`, and creates the `anon` role for PostgREST.
 - **electric** (`electricsql/electric:latest`): The sync service. Connects to Postgres, reads the WAL, and serves shape streams over HTTP on port 3000.
+- **postgrest** (`postgrest/postgrest`): Auto-generated REST API from the Postgres schema. Exposes the `public` schema via the `anon` role on port 4001. Replaces the previous hand-written Express server.
 
-### Express API Server
+### PostgREST API Conventions
 
-A minimal write API in `server/index.ts`. Four endpoints:
+PostgREST uses a different URL convention than a typical REST API:
 
-| Method | Path | Action |
-|---|---|---|
-| `POST` | `/api/todos` | Insert a new todo |
-| `PATCH` | `/api/todos/:id` | Toggle completed status |
-| `DELETE` | `/api/todos/:id` | Delete a single todo |
-| `DELETE` | `/api/todos` | Clear all todos |
+| Operation | Method + URL |
+|---|---|
+| Create | `POST /todos` with JSON body |
+| Update | `PATCH /todos?id=eq.{uuid}` with JSON body |
+| Delete one | `DELETE /todos?id=eq.{uuid}` |
+| Delete all | `DELETE /todos` |
 
-All endpoints write directly to Postgres via `pg.Pool`. There is no ORM.
+The `Prefer: return=minimal` header suppresses response bodies on writes.
+
+### Deployment
+
+- **Frontend**: Cloudflare Pages. Configured via `wrangler.toml`. Deploy with `pnpm deploy`.
+- **Backend**: Docker Compose for local dev. For production, the Postgres + Electric + PostgREST stack runs on a VPS or managed services. Cloudflare's CDN can be placed in front of Electric to cache shape streams (recommended for scaling).
 
 ### Ports
 
 | Service | Port |
 |---|---|
 | Vite dev server | 5173 |
-| Express API | 4001 |
+| PostgREST | 4001 |
 | Electric sync | 3000 |
 | Postgres | 54321 |
 
@@ -161,19 +175,18 @@ All endpoints write directly to Postgres via `pg.Pool`. There is no ORM.
 
 ```
 esql_poc/
-├── docker-compose.yml              # Postgres 18 + Electric service
+├── docker-compose.yml              # Postgres 18 + Electric + PostgREST
 ├── db/
-│   └── init.sql                    # DDL: todos table + replica identity
-├── server/
-│   └── index.ts                    # Express write API
+│   └── init.sql                    # DDL + PostgREST role grants
 ├── src/
-│   ├── main.tsx                    # React root + QueryClientProvider
+│   ├── main.tsx                    # React root
 │   ├── App.tsx                     # Layout, composes all components
-│   ├── electric.ts                 # Todo type + Electric shape config
-│   ├── api.ts                     # fetch wrappers for the write API
+│   ├── electric.ts                 # Todo type definition
+│   ├── collection.ts              # TanStack DB Electric collection
+│   ├── api.ts                     # PostgREST fetch wrappers (used by collection handlers)
 │   ├── store.ts                   # Zustand store (identity + filter)
 │   ├── hooks/
-│   │   └── useTodos.ts            # Combines Electric + TQ + Zustand
+│   │   └── useTodos.ts            # useLiveQuery + collection mutations
 │   └── components/
 │       ├── AddTodo.tsx            # Text input + submit
 │       ├── TodoList.tsx           # Renders todo items
@@ -182,9 +195,9 @@ esql_poc/
 ├── package.json
 ├── pnpm-lock.yaml
 ├── .npmrc
+├── wrangler.toml                  # Cloudflare Pages config
 ├── tsconfig.json                  # Project references
 ├── tsconfig.app.json              # Frontend TS config
-├── tsconfig.server.json           # Server TS config
 └── vite.config.ts
 ```
 
@@ -205,3 +218,5 @@ ALTER TABLE todos REPLICA IDENTITY FULL;
 ```
 
 `REPLICA IDENTITY FULL` is required by Electric so that UPDATE and DELETE WAL entries include the full row, not just the primary key.
+
+PostgREST accesses this table via the `anon` role, which is granted `SELECT, INSERT, UPDATE, DELETE` on all tables in the `public` schema.

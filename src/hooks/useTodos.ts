@@ -1,100 +1,61 @@
-import { useShape } from "@electric-sql/react";
-import { useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
+import { useLiveQuery, eq } from "@tanstack/react-db";
 import { v4 as uuidv4 } from "uuid";
-import { todosShapeOptions, type Todo } from "../electric";
-import { createTodo, toggleTodo, deleteTodo, clearAllTodos } from "../api";
+import { todosCollection } from "../collection";
+import { clearAllTodos } from "../api";
 import { useAppStore } from "../store";
+import type { Todo } from "../electric";
 
 export function useTodos() {
-  const queryClient = useQueryClient();
-  const { clientId, clientName, filter } = useAppStore();
+  const { clientName, filter } = useAppStore();
 
-  // Electric SQL: real-time read path from Postgres
-  const { data: serverTodos, isLoading, isError } = useShape<Todo>(todosShapeOptions);
+  // All todos (for counts) — direct collection query, always unfiltered
+  const { data: allTodos } = useLiveQuery(todosCollection);
 
-  // TanStack Query: optimistic mutation state for pending writes
-  const pendingCreates = useMutationState<Todo>({
-    filters: { mutationKey: ["createTodo"], status: "pending" },
-    select: (mutation) => mutation.state.context as Todo,
-  }).filter(Boolean);
+  // Filtered + sorted todos for display
+  const {
+    data: filteredTodos,
+    isLoading,
+    isError,
+  } = useLiveQuery(
+    (q) => {
+      const base = q.from({ todo: todosCollection });
+      if (filter === "active")
+        return base.where(({ todo }) => eq(todo.completed, false));
+      if (filter === "completed")
+        return base.where(({ todo }) => eq(todo.completed, true));
+      return base;
+    },
+    [filter]
+  );
 
-  const addMutation = useMutation({
-    mutationKey: ["createTodo"],
-    mutationFn: ({ id, title }: { id: string; title: string }) =>
-      createTodo(id, title, clientName),
-    onMutate: ({ id, title }) => {
-      // Return optimistic todo as context
-      return {
-        id,
+  const todos = (filteredTodos ?? []) as Todo[];
+  const all = (allTodos ?? []) as Todo[];
+
+  return {
+    todos,
+    totalCount: all.length,
+    activeCount: all.filter((t) => !t.completed).length,
+    isLoading,
+    isError,
+    addTodo: (title: string) => {
+      todosCollection.insert({
+        id: uuidv4(),
         title,
         completed: false,
         created_by: clientName,
         created_at: new Date().toISOString(),
-      } satisfies Todo;
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["todos"] });
-    },
-  });
-
-  const toggleMutation = useMutation({
-    mutationKey: ["toggleTodo"],
-    mutationFn: ({ id, completed }: { id: string; completed: boolean }) =>
-      toggleTodo(id, completed),
-  });
-
-  const deleteMutation = useMutation({
-    mutationKey: ["deleteTodo"],
-    mutationFn: (id: string) => deleteTodo(id),
-  });
-
-  const clearMutation = useMutation({
-    mutationKey: ["clearTodos"],
-    mutationFn: clearAllTodos,
-  });
-
-  // Merge server data with optimistic pending creates
-  const mergedTodos = (() => {
-    const map = new Map<string, Todo>();
-    for (const todo of serverTodos) {
-      map.set(todo.id, todo);
-    }
-    for (const todo of pendingCreates) {
-      if (!map.has(todo.id)) {
-        map.set(todo.id, todo);
-      }
-    }
-    return Array.from(map.values());
-  })();
-
-  // Apply local filter (Zustand state)
-  const filteredTodos = mergedTodos
-    .filter((todo) => {
-      if (filter === "active") return !todo.completed;
-      if (filter === "completed") return todo.completed;
-      return true;
-    })
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-  return {
-    todos: filteredTodos,
-    totalCount: mergedTodos.length,
-    activeCount: mergedTodos.filter((t) => !t.completed).length,
-    isLoading,
-    isError,
-    addTodo: (title: string) => {
-      const id = uuidv4();
-      addMutation.mutate({ id, title });
+      } as Todo);
     },
     toggleTodo: (id: string, completed: boolean) => {
-      toggleMutation.mutate({ id, completed });
+      todosCollection.update(id, (draft) => {
+        (draft as Todo).completed = completed;
+      });
     },
     deleteTodo: (id: string) => {
-      deleteMutation.mutate(id);
+      todosCollection.delete(id);
     },
     clearAll: () => {
-      clearMutation.mutate();
+      clearAllTodos();
     },
-    clientId,
   };
 }

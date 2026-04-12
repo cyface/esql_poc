@@ -5,20 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Start everything (Vite + Express API, requires Docker already running)
-pnpm dev
-
-# Start infrastructure (Postgres 18 + Electric sync service)
+# Start infrastructure (Postgres 18 + Electric + PostgREST)
 pnpm db:up
+
+# Start Vite dev server
+pnpm dev
 
 # Tear down and recreate with clean DB
 pnpm db:reset
 
-# Run frontend or API server independently
-pnpm dev:frontend
-pnpm dev:server
-
-# Type check (project references: app, node, server)
+# Type check (project references: app, node)
 pnpm tsc -b
 
 # Lint
@@ -26,6 +22,9 @@ pnpm lint
 
 # Build for production
 pnpm build
+
+# Deploy frontend to Cloudflare Pages
+pnpm deploy
 ```
 
 No test framework is configured yet.
@@ -34,42 +33,42 @@ No test framework is configured yet.
 
 This is a real-time multi-client sync POC using Electric SQL. It's a collaborative todo list where changes in one browser tab appear instantly in all others.
 
-### Three-library split
+### Two-library split
 
 Each client-side library owns one concern:
 
-- **Electric SQL** (`@electric-sql/react`, `useShape`): Read path only. Subscribes to a Postgres table via Electric's shape stream HTTP endpoint. Does not handle writes.
-- **TanStack Query** (`@tanstack/react-query`, `useMutation` + `useMutationState`): Write path only. Sends mutations to the Express API. `useMutationState` tracks in-flight creates for optimistic UI. This project does **not** use `useQuery` — reads are Electric's job.
+- **TanStack DB + Electric SQL** (`@tanstack/react-db` + `@tanstack/electric-db-collection`): Read and write path. An Electric collection syncs the `todos` Postgres table into a reactive client-side store. `useLiveQuery` provides SQL-like reactive queries. Mutations (`.insert()`, `.update()`, `.delete()`) are optimistic by default with auto-rollback. Collection persistence handlers (`onInsert`, `onUpdate`, `onDelete`) send writes to PostgREST.
 - **Zustand**: Client-local state that doesn't need server sync (per-tab identity, UI filter selection).
 
 ### Data flow
 
-Writes: React component -> TanStack Query mutation -> `fetch` to Express API (port 4001) -> `pg.Pool` INSERT/UPDATE/DELETE -> Postgres.
+Writes: Component calls `todosCollection.insert()` -> UI updates immediately (optimistic) -> collection handler sends `fetch` to PostgREST (port 4001) -> PostgREST writes to Postgres. Rolls back on failure.
 
-Reads: Postgres WAL -> Electric sync service (port 3000) -> HTTP shape stream -> `useShape` hook -> React re-render in all connected tabs.
-
-Optimistic merge: `src/hooks/useTodos.ts` merges Electric's server data with TanStack Query's pending mutation state. Server data always wins when a todo ID exists in both.
+Reads: Postgres WAL -> Electric sync service (port 3000) -> shape stream -> Electric collection in TanStack DB -> `useLiveQuery` re-renders all connected tabs.
 
 ### Infrastructure
 
-Docker Compose runs two services:
+Docker Compose runs three services:
 - **postgres:18-alpine** on port 54321 — runs with `wal_level=logical` for Electric's replication
 - **electricsql/electric** on port 3000 — reads the WAL and serves `/v1/shape` streams
+- **postgrest/postgrest** on port 4001 — auto-generated REST API from the Postgres schema, replaces the previous Express server
 
-The Express API server (port 4001) is a separate Node process, not Dockerized.
+Frontend deploys to Cloudflare Pages (`wrangler.toml`). For local dev, use Vite dev server.
 
 ### Key conventions
 
 - The `Todo` interface in `src/electric.ts` requires `[key: string]: unknown` index signature to satisfy Electric's `Row<unknown>` constraint.
+- The Electric collection is a module-level singleton in `src/collection.ts`, not created inside React components.
 - Postgres table must have `REPLICA IDENTITY FULL` for Electric to work with UPDATE/DELETE.
 - UUIDs are generated client-side (`uuid` package) and sent with the create request.
-- TypeScript uses project references: `tsconfig.app.json` (frontend), `tsconfig.server.json` (Express API), `tsconfig.node.json` (Vite config).
+- `src/api.ts` uses PostgREST conventions: filtering via query params (`?id=eq.{uuid}`), `Prefer: return=minimal` header.
+- TypeScript uses project references: `tsconfig.app.json` (frontend), `tsconfig.node.json` (Vite config).
 
 ### Ports
 
 | Service | Port |
 |---|---|
 | Vite dev server | 5173 |
-| Express API | 4001 |
+| PostgREST | 4001 |
 | Electric sync | 3000 |
 | Postgres | 54321 |

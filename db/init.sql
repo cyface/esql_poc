@@ -1,3 +1,6 @@
+-- PostgREST anonymous access role
+CREATE ROLE anon NOLOGIN;
+
 CREATE TABLE IF NOT EXISTS todos (
   id UUID PRIMARY KEY,
   title TEXT NOT NULL,
@@ -6,5 +9,11 @@ CREATE TABLE IF NOT EXISTS todos (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Electric requires a publication for logical replication
+-- Electric requires full row data in WAL for UPDATE/DELETE
 ALTER TABLE todos REPLICA IDENTITY FULL;
+
+-- PostgREST: grant access to the anon role
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon;
