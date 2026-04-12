@@ -23,7 +23,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 10s
+      start_period: 20s
 
   electric:
     image: electricsql/electric:latest
