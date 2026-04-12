@@ -40,6 +40,7 @@ services:
       interval: 3s
       timeout: 5s
       retries: 10
+      start_period: 15s
 
   postgrest:
     image: postgrest/postgrest
@@ -55,7 +56,8 @@ services:
     restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo -e \"GET /ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" > /dev/tcp/localhost/3001'"]
-      interval: 40s
+      interval: 3s
+      start_period: 20s
       timeout: 5s
       retries: 10
 
