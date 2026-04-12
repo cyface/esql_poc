@@ -1,73 +1,58 @@
-# React + TypeScript + Vite
+# Electric SQL Sync POC
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A proof-of-concept for real-time multi-client synchronization using Electric SQL. Open the app in multiple browser tabs and watch changes sync instantly between them.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **React 19** + **Vite** — frontend
+- **Electric SQL** — real-time read sync from Postgres via shape streams
+- **TanStack Query** — write mutations with optimistic UI
+- **Zustand** — client-local UI state (identity, filters)
+- **Express** + **pg** — write API server
+- **PostgreSQL 18** — database (Docker)
 
-## React Compiler
+## Prerequisites
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- [pnpm](https://pnpm.io/) (see `packageManager` in package.json)
+- [Docker](https://www.docker.com/) and Docker Compose
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+```bash
+# Install dependencies
+pnpm install
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+# Start Postgres 18 + Electric sync service
+pnpm db:up
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# Start Vite dev server + Express API server
+pnpm dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open http://localhost:5173 in two or more browser tabs. Each tab gets a random identity. Add, toggle, or delete todos in one tab and see them appear in the others.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Scripts
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+| Script | Description |
+|---|---|
+| `pnpm dev` | Start Vite + Express API concurrently |
+| `pnpm dev:frontend` | Start Vite only |
+| `pnpm dev:server` | Start Express API only |
+| `pnpm build` | Type check + production build |
+| `pnpm lint` | Run ESLint |
+| `pnpm db:up` | Start Docker services |
+| `pnpm db:down` | Stop Docker services |
+| `pnpm db:reset` | Tear down volumes + restart (clean DB) |
+
+## Ports
+
+| Service | Port |
+|---|---|
+| Vite dev server | 5173 |
+| Express API | 4001 |
+| Electric sync | 3000 |
+| PostgreSQL | 54321 |
+
+## Architecture
+
+See [docs/01-architecture.md](docs/01-architecture.md) for the full architecture writeup, including data flow diagrams and library responsibility breakdown.
