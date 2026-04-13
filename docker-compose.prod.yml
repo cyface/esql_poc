@@ -29,7 +29,7 @@ services:
       - "3000"
     restart: on-failure
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/v1/health"]
+      test: ["CMD", "postgrest", "--ready"]
       interval: 10s
       timeout: 5s
       retries: 5
