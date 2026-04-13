@@ -6,8 +6,8 @@ services:
     environment:
       DATABASE_URL: ${POSTGRES_URL}?sslmode=disable
       ELECTRIC_INSECURE: "true"
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/v1/health"]
@@ -24,8 +24,8 @@ services:
       PGRST_DB_ANON_ROLE: anon
       PGRST_SERVER_HOST: "0.0.0.0"
       PGRST_ADMIN_SERVER_PORT: "3001"
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     restart: on-failure
     healthcheck:
       test: ["CMD", "postgrest", "--ready"]
