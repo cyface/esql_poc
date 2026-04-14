@@ -42,7 +42,31 @@ export function TicketDetailPanel({
   const { labels } = useLabels();
   const activeIds = labelsForTicket(ticketId).map((tl) => tl.label_id);
 
-  if (!ticket) return null;
+  if (!ticket) {
+    return (
+      <div className="ticket-detail-overlay" onClick={onClose}>
+        <div className="ticket-detail-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="panel-header">
+            <div className="panel-title-area">
+              <span className="panel-title-input" style={{ color: "#94a3b8" }}>
+                This ticket has been deleted
+              </span>
+            </div>
+            <div className="panel-actions">
+              <button className="close-panel-btn" onClick={onClose}>
+                &times;
+              </button>
+            </div>
+          </div>
+          <div className="panel-body">
+            <div className="panel-main" style={{ padding: "2rem", textAlign: "center", color: "#64748b" }}>
+              This ticket was deleted by another user.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="ticket-detail-overlay" onClick={onClose}>

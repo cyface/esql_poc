@@ -7,9 +7,15 @@ export function useMembers() {
   const { activeBoardId, clientName, activeMemberId, setActiveMemberId } =
     useAppStore();
   const [members, setMembers] = useState<Member[]>([]);
+  const [isError, setIsError] = useState(false);
 
   useEffect(() => {
-    fetchMembers().then(setMembers).catch((err) => console.error("Failed to load members:", err));
+    fetchMembers()
+      .then(setMembers)
+      .catch((err) => {
+        console.error("Failed to load members:", err);
+        setIsError(true);
+      });
   }, []);
 
   const filtered = activeBoardId
@@ -23,5 +29,5 @@ export function useMembers() {
     }
   }, [filtered, activeMemberId, clientName, setActiveMemberId]);
 
-  return { members: filtered };
+  return { members: filtered, isError };
 }

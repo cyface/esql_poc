@@ -3,6 +3,7 @@ import { Header } from "./components/Layout/Header";
 import { FilterBar } from "./components/Layout/FilterBar";
 import { KanbanBoard } from "./components/Board/KanbanBoard";
 import { TicketDetailPanel } from "./components/TicketDetail/TicketDetailPanel";
+import { Toasts } from "./components/Layout/Toasts";
 import { useBoard } from "./hooks/useBoard";
 import { useColumns } from "./hooks/useColumns";
 import { useTickets } from "./hooks/useTickets";
@@ -14,9 +15,10 @@ import "./App.css";
 
 function App() {
   const { board, isLoading, isError } = useBoard();
-  const { columns } = useColumns();
-  const { members } = useMembers();
-  const { labels } = useLabels();
+  const { columns, isError: columnsError } = useColumns();
+  const { members, isError: membersError } = useMembers();
+  const { labels, isError: labelsError } = useLabels();
+  const dataError = columnsError || membersError || labelsError;
   const { ticketLabels } = useTicketLabels();
   const { selectedTicketId, setSelectedTicketId } = useAppStore();
 
@@ -40,10 +42,12 @@ function App() {
     );
   }
 
-  if (isError) {
+  if (isError || dataError) {
     return (
       <div className="app loading-screen">
-        <p className="error">Failed to connect. Is Docker running?</p>
+        <p className="error">
+          Failed to load board data. {isError ? "Is Docker running?" : "Some data failed to load — try refreshing."}
+        </p>
       </div>
     );
   }
@@ -75,6 +79,7 @@ function App() {
           onDelete={removeTicket}
         />
       )}
+      <Toasts />
     </div>
   );
 }
