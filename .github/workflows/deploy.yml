@@ -20,7 +20,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - run: pnpm install
+      - run: |
+          pnpm --version
+          head -1 pnpm-lock.yaml
+          pnpm install
 
       - run: pnpm build
 
