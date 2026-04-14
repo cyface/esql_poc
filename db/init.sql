@@ -96,6 +96,17 @@ ALTER TABLE tickets REPLICA IDENTITY FULL;
 ALTER TABLE ticket_labels REPLICA IDENTITY FULL;
 ALTER TABLE comments REPLICA IDENTITY FULL;
 
+-- Indexes on foreign keys for query performance
+CREATE INDEX idx_members_board_id ON members(board_id);
+CREATE INDEX idx_columns_board_id ON columns(board_id);
+CREATE INDEX idx_labels_board_id ON labels(board_id);
+CREATE INDEX idx_tickets_board_id ON tickets(board_id);
+CREATE INDEX idx_tickets_column_id ON tickets(column_id);
+CREATE INDEX idx_tickets_assignee_id ON tickets(assignee_id);
+CREATE INDEX idx_ticket_labels_ticket_id ON ticket_labels(ticket_id);
+CREATE INDEX idx_ticket_labels_label_id ON ticket_labels(label_id);
+CREATE INDEX idx_comments_ticket_id ON comments(ticket_id);
+
 -- PostgREST: grant access to the anon role
 GRANT USAGE ON SCHEMA public TO anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon;
