@@ -77,10 +77,8 @@ export const commentsCollection = createCollection(
       const comment = transaction.mutations[0].modified;
       await api.createComment(comment as Record<string, unknown>);
     },
-    onUpdate: async ({ transaction }) => {
-      const comment = transaction.mutations[0].modified as Comment;
-      await api.updateComment(comment.id, comment as Record<string, unknown>);
-    },
+    // Comment editing not currently used — no-op to avoid full-object feedback loop
+    onUpdate: async () => {},
     onDelete: async ({ transaction }) => {
       const key = transaction.mutations[0].key;
       await api.deleteComment(key as string);

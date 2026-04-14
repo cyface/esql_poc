@@ -15,7 +15,8 @@ export function useBoard() {
         setBoards(data);
         setIsLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Failed to load boards:", err);
         setIsError(true);
         setIsLoading(false);
       });

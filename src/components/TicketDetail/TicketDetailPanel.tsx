@@ -1,4 +1,5 @@
-import { useLiveQuery } from "@tanstack/react-db";
+import { useState } from "react";
+import { useLiveQuery, eq } from "@tanstack/react-db";
 import { TicketFields } from "./TicketFields";
 import { TicketLabels } from "./TicketLabels";
 import { TicketComments } from "./TicketComments";
@@ -23,9 +24,19 @@ export function TicketDetailPanel({
   onUpdate,
   onDelete,
 }: TicketDetailPanelProps) {
-  // Subscribe to entire collection for reliable reactivity
-  const { data } = useLiveQuery(ticketsCollection);
-  const ticket = ((data ?? []) as Ticket[]).find((t) => t.id === ticketId);
+  const { data } = useLiveQuery(
+    (q) =>
+      q
+        .from({ ticket: ticketsCollection })
+        .where(({ ticket }) => eq(ticket.id, ticketId)),
+    [ticketId]
+  );
+  const ticket = (data as Ticket[] | undefined)?.[0];
+
+  // Local draft state — only active while user is editing (non-null = editing)
+  const [draftTitle, setDraftTitle] = useState<string | null>(null);
+  const [draftDesc, setDraftDesc] = useState<string | null>(null);
+
   const { comments, addComment, removeComment } = useComments(ticketId);
   const { labelsForTicket, addLabel, removeLabel } = useTicketLabels();
   const { labels } = useLabels();
@@ -40,8 +51,20 @@ export function TicketDetailPanel({
           <div className="panel-title-area">
             <input
               className="panel-title-input"
-              value={ticket.title}
-              onChange={(e) => onUpdate(ticket.id, { title: e.target.value })}
+              value={draftTitle ?? ticket.title}
+              onFocus={() => setDraftTitle(ticket.title)}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              onBlur={() => {
+                if (draftTitle !== null && draftTitle !== ticket.title) {
+                  onUpdate(ticket.id, { title: draftTitle });
+                }
+                setDraftTitle(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
             />
           </div>
           <div className="panel-actions">
@@ -66,10 +89,15 @@ export function TicketDetailPanel({
               <h4>Description</h4>
               <textarea
                 className="description-textarea"
-                value={ticket.description}
-                onChange={(e) =>
-                  onUpdate(ticket.id, { description: e.target.value })
-                }
+                value={draftDesc ?? ticket.description}
+                onFocus={() => setDraftDesc(ticket.description)}
+                onChange={(e) => setDraftDesc(e.target.value)}
+                onBlur={() => {
+                  if (draftDesc !== null && draftDesc !== ticket.description) {
+                    onUpdate(ticket.id, { description: draftDesc });
+                  }
+                  setDraftDesc(null);
+                }}
                 placeholder="Add a description..."
                 rows={4}
               />

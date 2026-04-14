@@ -12,7 +12,16 @@ async function postgrest(
   init?: RequestInit
 ): Promise<Response> {
   const res = await fetch(`${API_URL}${path}`, init);
-  if (!res.ok) throw new Error(`PostgREST ${init?.method ?? "GET"} ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = ` - ${body.message ?? JSON.stringify(body)}`;
+    } catch {
+      // Response body wasn't JSON
+    }
+    throw new Error(`PostgREST ${init?.method ?? "GET"} ${path} failed: ${res.status}${detail}`);
+  }
   return res;
 }
 

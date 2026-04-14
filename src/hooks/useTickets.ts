@@ -66,9 +66,10 @@ export function useTickets(ticketLabelMap?: Record<string, string[]>) {
   }, [filtered]);
 
   const addTicket = useCallback((columnId: string, title: string, position: number) => {
+    if (!activeBoardId) return;
     ticketsCollection.insert({
       id: uuidv4(),
-      board_id: activeBoardId!,
+      board_id: activeBoardId,
       column_id: columnId,
       title,
       description: "",
